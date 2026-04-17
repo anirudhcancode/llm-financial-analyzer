@@ -1,0 +1,10 @@
+venv/
+__pycache__/
+*.pyc
+.env
+data/
+*.csv
+*.parquet
+models/
+.DS_Store
+*.pkl
