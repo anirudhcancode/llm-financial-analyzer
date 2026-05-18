@@ -1,10 +1,8 @@
 import os
 import pandas as pd
 import plotly.graph_objects as go
-import plotly.express as px
 from plotly.subplots import make_subplots
 from sqlalchemy import create_engine
-import json
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -33,12 +31,12 @@ COLORS = {
     "MSFT": "#7c3aed",
     "GOOGL": "#ff6b35",
     "AMZN": "#ffd166",
-    "NVDA": "#06d6a0",
+    "NVDA": "#00b4d8",
     "TSLA": "#ef476f",
     "PLTR": "#118ab2",
     "SNOW": "#a8dadc",
-    "DDOG": "#ff6b35",
-    "MDB": "#06d6a0",
+    "DDOG": "#f77f00",
+    "MDB": "#caffbf",
 }
 
 DARK_TEMPLATE = dict(
@@ -54,6 +52,7 @@ DARK_TEMPLATE = dict(
 )
 
 os.makedirs("static/charts", exist_ok=True)
+
 
 def load_prices(ticker: str, days: int = 365) -> pd.DataFrame:
     with engine.connect() as conn:
@@ -71,6 +70,7 @@ def load_prices(ticker: str, days: int = 365) -> pd.DataFrame:
     df['date'] = pd.to_datetime(df['date'])
     return df.sort_values('date')
 
+
 def load_events(ticker: str) -> pd.DataFrame:
     with engine.connect() as conn:
         df = pd.read_sql(
@@ -82,6 +82,7 @@ def load_events(ticker: str) -> pd.DataFrame:
         )
     df['date'] = pd.to_datetime(df['date'])
     return df
+
 
 def load_earnings(ticker: str) -> pd.DataFrame:
     with engine.connect() as conn:
@@ -101,9 +102,9 @@ def load_earnings(ticker: str) -> pd.DataFrame:
     df['period_date'] = pd.to_datetime(df['period_date'])
     return df
 
-# ── Chart 1: Price history with events ──
+
 def chart_price_history(ticker: str) -> str:
-    prices = load_prices(ticker, days=756)  # 3 years
+    prices = load_prices(ticker, days=756)
     events = load_events(ticker)
 
     fig = make_subplots(
@@ -114,7 +115,6 @@ def chart_price_history(ticker: str) -> str:
         subplot_titles=[f"{ticker} — Price History (3 Years)", "Daily Return %"]
     )
 
-    # Price line
     fig.add_trace(go.Scatter(
         x=prices['date'],
         y=prices['close'],
@@ -124,7 +124,6 @@ def chart_price_history(ticker: str) -> str:
         hovertemplate='%{x}<br>$%{y:.2f}<extra></extra>'
     ), row=1, col=1)
 
-    # Major events
     if not events.empty:
         surges = events[events['event_type'] == 'major_surge']
         drops = events[events['event_type'] == 'major_drop']
@@ -134,7 +133,6 @@ def chart_price_history(ticker: str) -> str:
             for d in surges['date']:
                 match = prices[prices['date'] == d]
                 surge_prices.append(float(match['close'].values[0]) if not match.empty else None)
-
             fig.add_trace(go.Scatter(
                 x=surges['date'],
                 y=surge_prices,
@@ -150,7 +148,6 @@ def chart_price_history(ticker: str) -> str:
             for d in drops['date']:
                 match = prices[prices['date'] == d]
                 drop_prices.append(float(match['close'].values[0]) if not match.empty else None)
-
             fig.add_trace(go.Scatter(
                 x=drops['date'],
                 y=drop_prices,
@@ -161,7 +158,6 @@ def chart_price_history(ticker: str) -> str:
                 customdata=drops['price_change_pct']
             ), row=1, col=1)
 
-    # Daily return bars
     colors = ['#06d6a0' if r >= 0 else '#ef476f' for r in prices['daily_return'].fillna(0)]
     fig.add_trace(go.Bar(
         x=prices['date'],
@@ -186,16 +182,24 @@ def chart_price_history(ticker: str) -> str:
     print(f"  Saved {path}")
     return path
 
-# ── Chart 2: Earnings reaction heatmap ──
+
 def chart_earnings_reactions() -> str:
     all_reactions = []
     for ticker in COMPANIES:
-        reactions = load_earnings(ticker)
-        if not reactions.empty:
-            reactions['ticker'] = ticker
-            r = reactions[['ticker', 'period', 'reaction_30d_pct']].tail(8)
-            r = r.drop_duplicates(subset=['ticker', 'period'], keep='last')
-            all_reactions.append(r)
+        with engine.connect() as conn:
+            df = pd.read_sql(
+                f"""SELECT period, reaction_30d_pct
+                    FROM earnings_reactions
+                    WHERE ticker = '{ticker}'
+                    AND reaction_30d_pct IS NOT NULL
+                    ORDER BY period_date DESC
+                    LIMIT 8""",
+                conn
+            )
+        if not df.empty:
+            df['ticker'] = ticker
+            df = df.drop_duplicates(subset=['period'], keep='first')
+            all_reactions.append(df)
 
     if not all_reactions:
         return ""
@@ -203,7 +207,6 @@ def chart_earnings_reactions() -> str:
     df = pd.concat(all_reactions, ignore_index=True)
     pivot = df.pivot(index='ticker', columns='period', values='reaction_30d_pct')
     pivot = pivot[sorted(pivot.columns, key=lambda x: (x.split()[-1], x.split()[0]))]
-    pivot = pivot[pivot.columns[-8:]]
 
     fig = go.Figure(data=go.Heatmap(
         z=pivot.values,
@@ -215,7 +218,7 @@ def chart_earnings_reactions() -> str:
             [1.0, '#06d6a0']
         ],
         zmid=0,
-        text=[[f"{v:.1f}%" if v == v else "N/A"
+        text=[[f"{v:.1f}%" if not pd.isna(v) else "N/A"
                for v in row] for row in pivot.values],
         texttemplate="%{text}",
         hovertemplate='%{y} | %{x}<br>30d reaction: %{z:.1f}%<extra></extra>'
@@ -224,7 +227,7 @@ def chart_earnings_reactions() -> str:
     fig.update_layout(
         **DARK_TEMPLATE['layout'].to_plotly_json(),
         title="30-Day Price Reaction After Earnings (Last 8 Quarters)",
-        height=400,
+        height=450,
         xaxis_title="Quarter",
         yaxis_title="Company"
     )
@@ -235,7 +238,7 @@ def chart_earnings_reactions() -> str:
     print(f"  Saved {path}")
     return path
 
-# ── Chart 3: Volatility comparison ──
+
 def chart_volatility_comparison() -> str:
     rows = []
     for ticker in COMPANIES:
@@ -243,7 +246,6 @@ def chart_volatility_comparison() -> str:
         if not prices.empty:
             rows.append({
                 "ticker": ticker,
-                "company": COMPANIES[ticker].split()[0],
                 "volatility": round(float(prices['volatility_30d'].mean() or 0), 2),
                 "avg_return": round(float(prices['daily_return'].mean() or 0), 3),
                 "momentum_30d": round(float(prices['momentum_30d'].iloc[-1] or 0), 2)
@@ -288,7 +290,7 @@ def chart_volatility_comparison() -> str:
     print(f"  Saved {path}")
     return path
 
-# ── Chart 4: Predictions summary ──
+
 def chart_predictions() -> str:
     with engine.connect() as conn:
         df = pd.read_sql(
@@ -333,7 +335,7 @@ def chart_predictions() -> str:
 
     fig.update_layout(
         **DARK_TEMPLATE['layout'].to_plotly_json(),
-        title=f"Next Quarter Predictions — All 10 Companies",
+        title="Next Quarter Predictions — All 10 Companies",
         height=400,
         showlegend=False
     )
@@ -346,7 +348,7 @@ def chart_predictions() -> str:
     print(f"  Saved {path}")
     return path
 
-# ── Chart 5: Normalized price comparison ──
+
 def chart_normalized_prices() -> str:
     fig = go.Figure()
 
@@ -354,7 +356,10 @@ def chart_normalized_prices() -> str:
         prices = load_prices(ticker, days=365)
         if prices.empty:
             continue
-        normalized = (prices['close'] / prices['close'].iloc[0]) * 100
+        first_price = prices['close'].iloc[0]
+        if first_price == 0:
+            continue
+        normalized = (prices['close'] / first_price) * 100
         fig.add_trace(go.Scatter(
             x=prices['date'],
             y=normalized,
@@ -372,15 +377,17 @@ def chart_normalized_prices() -> str:
         title="Normalized Price Performance — Last 12 Months (Base = 100)",
         height=450,
         xaxis_title="Date",
-        yaxis_title="Normalized Price",
+        yaxis_title="Normalized Price (%)",
         hovermode='x unified'
     )
+    fig.update_yaxes(type='log')
 
     path = "static/charts/normalized_prices.json"
     with open(path, 'w') as f:
         f.write(fig.to_json())
     print(f"  Saved {path}")
     return path
+
 
 if __name__ == "__main__":
     print("Generating visualizations...")
