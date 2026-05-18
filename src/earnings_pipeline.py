@@ -48,60 +48,83 @@ def create_tables(engine):
         conn.commit()
     print("Earnings history table created")
 
+def get_row_value(income, row_names, col):
+    for name in row_names:
+        for idx in income.index:
+            if str(idx).lower().strip() == name.lower().strip():
+                val = income.loc[idx, col]
+                if pd.isna(val):
+                    return None
+                try:
+                    return int(val)
+                except (ValueError, OverflowError):
+                    return None
+    return None
+
 def fetch_earnings(ticker: str) -> pd.DataFrame:
     print(f"  Fetching earnings for {ticker}...")
     try:
         stock = yf.Ticker(ticker)
+        records = []
 
-        # Get income statement (quarterly)
-        income = stock.quarterly_income_stmt
-        if income is None or income.empty:
-            print(f"  No income statement for {ticker}")
+        # Get up to 40 quarters of earnings dates with EPS data
+        try:
+            earnings_dates = stock.get_earnings_dates(limit=40)
+        except:
+            earnings_dates = stock.earnings_dates
+
+        if earnings_dates is None or earnings_dates.empty:
+            print(f"  No earnings dates for {ticker}")
             return pd.DataFrame()
 
-        records = []
-        for col in income.columns:
+        # Get income statement for recent quarters
+        try:
+            income = stock.quarterly_income_stmt
+        except:
+            income = None
+
+        for idx, row in earnings_dates.iterrows():
             try:
-                period_date = pd.to_datetime(col).date()
-                year = period_date.year
-                quarter = (period_date.month - 1) // 3 + 1
+                date = pd.to_datetime(idx).date()
+                year = date.year
+                quarter = (date.month - 1) // 3 + 1
                 period = f"Q{quarter} {year}"
 
+                eps_actual = row.get("Reported EPS", None)
+                eps_estimate = row.get("EPS Estimate", None)
+                surprise_pct = row.get("Surprise(%)", None)
+
+                # Clean up NaN values
+                eps_actual = float(eps_actual) if eps_actual is not None and not pd.isna(eps_actual) else None
+                eps_estimate = float(eps_estimate) if eps_estimate is not None and not pd.isna(eps_estimate) else None
+                surprise_pct = float(surprise_pct) if surprise_pct is not None and not pd.isna(surprise_pct) else None
+
+                # Try to get revenue from income statement
                 revenue = None
                 net_income = None
                 gross_profit = None
                 operating_income = None
 
-                for idx in income.index:
-                    idx_lower = str(idx).lower()
-                    val = income.loc[idx, col]
-                    if pd.isna(val):
-                        val = None
-                    else:
-                        val = int(val)
-
-                    if 'total revenue' in idx_lower or 'revenue' in idx_lower:
-                        if revenue is None:
-                            revenue = val
-                    elif 'net income' in idx_lower:
-                        if net_income is None:
-                            net_income = val
-                    elif 'gross profit' in idx_lower:
-                        gross_profit = val
-                    elif 'operating income' in idx_lower or 'ebit' in idx_lower:
-                        if operating_income is None:
-                            operating_income = val
+                if income is not None and not income.empty:
+                    for col in income.columns:
+                        col_date = pd.to_datetime(col).date()
+                        if abs((col_date - date).days) < 45:
+                            revenue = get_row_value(income, ['total revenue', 'operating revenue'], col)
+                            net_income = get_row_value(income, ['net income', 'net income common stockholders'], col)
+                            gross_profit = get_row_value(income, ['gross profit'], col)
+                            operating_income = get_row_value(income, ['operating income', 'ebit'], col)
+                            break
 
                 records.append({
                     "ticker": ticker,
                     "period": period,
-                    "period_date": period_date,
+                    "period_date": date,
                     "revenue": revenue,
                     "revenue_estimate": None,
                     "revenue_surprise_pct": None,
-                    "eps_actual": None,
-                    "eps_estimate": None,
-                    "eps_surprise_pct": None,
+                    "eps_actual": eps_actual,
+                    "eps_estimate": eps_estimate,
+                    "eps_surprise_pct": surprise_pct,
                     "net_income": net_income,
                     "gross_profit": gross_profit,
                     "operating_income": operating_income,
@@ -109,31 +132,9 @@ def fetch_earnings(ticker: str) -> pd.DataFrame:
             except Exception as e:
                 continue
 
-        # Get EPS data
-        try:
-            earnings_dates = stock.earnings_dates
-            if earnings_dates is not None and not earnings_dates.empty:
-                for idx, row in earnings_dates.iterrows():
-                    date = pd.to_datetime(idx).date()
-                    eps_actual = row.get("Reported EPS", None)
-                    eps_estimate = row.get("EPS Estimate", None)
-                    surprise_pct = row.get("Surprise(%)", None)
-
-                    for record in records:
-                        diff = abs((pd.to_datetime(record["period_date"]) -
-                                    pd.to_datetime(date)).days)
-                        if diff < 45:
-                            if eps_actual and not pd.isna(eps_actual):
-                                record["eps_actual"] = float(eps_actual)
-                            if eps_estimate and not pd.isna(eps_estimate):
-                                record["eps_estimate"] = float(eps_estimate)
-                            if surprise_pct and not pd.isna(surprise_pct):
-                                record["eps_surprise_pct"] = float(surprise_pct)
-                            break
-        except Exception as e:
-            pass
-
         df = pd.DataFrame(records)
+        # Remove future dates
+        df = df[pd.to_datetime(df['period_date']) <= pd.Timestamp.today()]
         print(f"  Found {len(df)} quarters for {ticker}")
         return df
 
@@ -144,9 +145,16 @@ def fetch_earnings(ticker: str) -> pd.DataFrame:
 def save_earnings(df: pd.DataFrame, engine):
     if df.empty:
         return
-    with engine.connect() as conn:
-        for _, row in df.iterrows():
-            try:
+    saved = 0
+    for _, row in df.iterrows():
+        row_dict = {}
+        for k, v in row.to_dict().items():
+            if isinstance(v, float) and pd.isna(v):
+                row_dict[k] = None
+            else:
+                row_dict[k] = v
+        try:
+            with engine.connect() as conn:
                 conn.execute(text("""
                     INSERT INTO earnings_history
                     (ticker, period, period_date, revenue, revenue_estimate,
@@ -159,12 +167,16 @@ def save_earnings(df: pd.DataFrame, engine):
                     ON CONFLICT (ticker, period_date) DO UPDATE SET
                         revenue = EXCLUDED.revenue,
                         eps_actual = EXCLUDED.eps_actual,
-                        eps_surprise_pct = EXCLUDED.eps_surprise_pct
-                """), row.to_dict())
-            except Exception as e:
-                continue
-        conn.commit()
-    print(f"  Saved {len(df)} earnings records for {df['ticker'].iloc[0]}")
+                        eps_surprise_pct = EXCLUDED.eps_surprise_pct,
+                        net_income = EXCLUDED.net_income,
+                        gross_profit = EXCLUDED.gross_profit,
+                        operating_income = EXCLUDED.operating_income
+                """), row_dict)
+                conn.commit()
+                saved += 1
+        except Exception as e:
+            continue
+    print(f"  Saved {saved} earnings records for {df['ticker'].iloc[0]}")
 
 if __name__ == "__main__":
     print("Starting earnings history pipeline...")
