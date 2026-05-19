@@ -84,35 +84,22 @@ def load_events(ticker: str) -> pd.DataFrame:
     return df
 
 
-def load_earnings(ticker: str) -> pd.DataFrame:
-    with engine.connect() as conn:
-        df = pd.read_sql(
-            f"""SELECT er.period, er.period_date,
-                er.reaction_1d_pct, er.reaction_30d_pct,
-                er.eps_surprise_pct,
-                eh.eps_actual, eh.eps_estimate
-                FROM earnings_reactions er
-                LEFT JOIN earnings_history eh
-                ON er.ticker = eh.ticker
-                AND er.period_date = eh.period_date
-                WHERE er.ticker = '{ticker}'
-                ORDER BY er.period_date""",
-            conn
-        )
-    df['period_date'] = pd.to_datetime(df['period_date'])
-    return df
-
-
 def chart_price_history(ticker: str) -> str:
     prices = load_prices(ticker, days=756)
+    cutoff = pd.Timestamp.today() - pd.Timedelta(days=756)
+    prices = prices[prices['date'] >= cutoff]
     events = load_events(ticker)
+
+    # Filter events to same window
+    if not events.empty:
+        events = events[events['date'] >= cutoff]
 
     fig = make_subplots(
         rows=2, cols=1,
         shared_xaxes=True,
         row_heights=[0.75, 0.25],
         vertical_spacing=0.05,
-        subplot_titles=[f"{ticker} — Price History (3 Years)", "Daily Return %"]
+        subplot_titles=[f"{ticker} — Price History (3 Years)", "30-Day Volatility %"]
     )
 
     fig.add_trace(go.Scatter(
@@ -158,7 +145,6 @@ def chart_price_history(ticker: str) -> str:
                 customdata=drops['price_change_pct']
             ), row=1, col=1)
 
-   # Use rolling volatility instead of daily bars — cleaner visualization
     fig.add_trace(go.Scatter(
         x=prices['date'],
         y=prices['volatility_30d'],
@@ -191,24 +177,36 @@ def chart_earnings_reactions() -> str:
     for ticker in COMPANIES:
         with engine.connect() as conn:
             df = pd.read_sql(
-                f"""SELECT period, reaction_30d_pct
+                f"""SELECT period, period_date, reaction_30d_pct
                     FROM earnings_reactions
                     WHERE ticker = '{ticker}'
-                    AND reaction_30d_pct IS NOT NULL
                     ORDER BY period_date DESC
-                    LIMIT 8""",
+                    LIMIT 12""",
                 conn
             )
         if not df.empty:
+            df = df[df['reaction_30d_pct'].notna()]
+            if df.empty:
+                continue
             df['ticker'] = ticker
             df = df.drop_duplicates(subset=['period'], keep='first')
-            all_reactions.append(df)
+            all_reactions.append(df[['ticker', 'period', 'reaction_30d_pct']].head(8))
 
     if not all_reactions:
         return ""
 
     df = pd.concat(all_reactions, ignore_index=True)
-    pivot = df.pivot(index='ticker', columns='period', values='reaction_30d_pct')
+
+    if df.empty or df['reaction_30d_pct'].isna().all():
+        print("  No valid reaction data for heatmap")
+        return ""
+
+    pivot = df.pivot_table(
+        index='ticker',
+        columns='period',
+        values='reaction_30d_pct',
+        aggfunc='mean'
+    )
     pivot = pivot[sorted(pivot.columns, key=lambda x: (x.split()[-1], x.split()[0]))]
 
     fig = go.Figure(data=go.Heatmap(
@@ -221,7 +219,7 @@ def chart_earnings_reactions() -> str:
             [1.0, '#06d6a0']
         ],
         zmid=0,
-        text=[[f"{v:.1f}%" if not pd.isna(v) else "N/A"
+        text=[[f"{v:.1f}%" if not pd.isna(v) else ""
                for v in row] for row in pivot.values],
         texttemplate="%{text}",
         hovertemplate='%{y} | %{x}<br>30d reaction: %{z:.1f}%<extra></extra>'
@@ -258,7 +256,7 @@ def chart_volatility_comparison() -> str:
 
     fig = make_subplots(
         rows=1, cols=2,
-        subplot_titles=["30-Day Volatility (%)", "1-Year Momentum (%)"]
+        subplot_titles=["30-Day Volatility (%)", "30-Day Momentum (%)"]
     )
 
     colors = [COLORS.get(t, '#06d6a0') for t in df['ticker']]
