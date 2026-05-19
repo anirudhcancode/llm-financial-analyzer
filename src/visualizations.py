@@ -158,13 +158,16 @@ def chart_price_history(ticker: str) -> str:
                 customdata=drops['price_change_pct']
             ), row=1, col=1)
 
-    colors = ['#06d6a0' if r >= 0 else '#ef476f' for r in prices['daily_return'].fillna(0)]
-    fig.add_trace(go.Bar(
+   # Use rolling volatility instead of daily bars — cleaner visualization
+    fig.add_trace(go.Scatter(
         x=prices['date'],
-        y=prices['daily_return'],
-        name='Daily Return %',
-        marker_color=colors,
-        hovertemplate='%{x}<br>%{y:.2f}%<extra></extra>'
+        y=prices['volatility_30d'],
+        mode='lines',
+        name='30d Volatility',
+        line=dict(color='#ffd166', width=1.5),
+        fill='tozeroy',
+        fillcolor='rgba(255, 209, 102, 0.1)',
+        hovertemplate='%{x}<br>Volatility: %{y:.2f}%<extra></extra>'
     ), row=2, col=1)
 
     fig.update_layout(
@@ -380,7 +383,6 @@ def chart_normalized_prices() -> str:
         yaxis_title="Normalized Price (%)",
         hovermode='x unified'
     )
-    fig.update_yaxes(type='log')
 
     path = "static/charts/normalized_prices.json"
     with open(path, 'w') as f:
