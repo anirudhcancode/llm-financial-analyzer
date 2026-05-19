@@ -167,7 +167,8 @@ def chart_price_history(ticker: str) -> str:
 
     path = f"static/charts/{ticker}_price_history.json"
     with open(path, 'w') as f:
-        f.write(fig.to_json())
+        f.write(fig.to_json(engine='json'))
+
     print(f"  Saved {path}")
     return path
 
@@ -235,7 +236,7 @@ def chart_earnings_reactions() -> str:
 
     path = "static/charts/earnings_heatmap.json"
     with open(path, 'w') as f:
-        f.write(fig.to_json())
+        f.write(fig.to_json(engine='json'))
     print(f"  Saved {path}")
     return path
 
@@ -287,7 +288,8 @@ def chart_volatility_comparison() -> str:
 
     path = "static/charts/volatility_comparison.json"
     with open(path, 'w') as f:
-        f.write(fig.to_json())
+        f.write(fig.to_json(engine='json'))
+
     print(f"  Saved {path}")
     return path
 
@@ -345,7 +347,8 @@ def chart_predictions() -> str:
 
     path = "static/charts/predictions.json"
     with open(path, 'w') as f:
-        f.write(fig.to_json())
+        f.write(fig.to_json(engine='json'))
+
     print(f"  Saved {path}")
     return path
 
@@ -384,7 +387,8 @@ def chart_normalized_prices() -> str:
 
     path = "static/charts/normalized_prices.json"
     with open(path, 'w') as f:
-        f.write(fig.to_json())
+        f.write(fig.to_json(engine='json'))
+
     print(f"  Saved {path}")
     return path
 
