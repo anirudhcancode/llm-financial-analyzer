@@ -211,7 +211,7 @@ def chart_earnings_reactions() -> str:
     pivot = pivot[sorted(pivot.columns, key=lambda x: (x.split()[-1], x.split()[0]))]
 
     fig = go.Figure(data=go.Heatmap(
-        z=pivot.values,
+        z=pivot.values.tolist(),
         x=pivot.columns.tolist(),
         y=pivot.index.tolist(),
         colorscale=[
@@ -221,7 +221,7 @@ def chart_earnings_reactions() -> str:
         ],
         zmid=0,
         text=[[f"{v:.1f}%" if not pd.isna(v) else ""
-               for v in row] for row in pivot.values],
+               for v in row] for row in pivot.values.tolist()],
         texttemplate="%{text}",
         hovertemplate='%{y} | %{x}<br>30d reaction: %{z:.1f}%<extra></extra>'
     ))
