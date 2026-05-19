@@ -363,9 +363,9 @@ def chart_normalized_prices() -> str:
         first_price = prices['close'].iloc[0]
         if first_price == 0:
             continue
-        normalized = (prices['close'] / first_price) * 100
+        normalized = ((prices['close'] / first_price) * 100).tolist()
         fig.add_trace(go.Scatter(
-            x=prices['date'],
+            x=prices['date'].tolist(),
             y=normalized,
             mode='lines',
             name=ticker,
@@ -384,7 +384,7 @@ def chart_normalized_prices() -> str:
         yaxis_title="Normalized Price (%)",
         hovermode='x unified'
     )
-
+    fig.update_yaxes(range=[0, 250])
     path = "static/charts/normalized_prices.json"
     with open(path, 'w') as f:
         f.write(fig.to_json(engine='json'))
