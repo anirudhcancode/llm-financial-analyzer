@@ -1,22 +1,10 @@
 import os
-import json
-from datetime import date
-from typing import Optional
-import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import create_engine, text
-
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://fraud_user:fraud_pass@localhost:5432/fraud_db"
-)
-
-engine = create_engine(DATABASE_URL)
 
 app = FastAPI(
     title="LLM Financial Intelligence Platform",
-    description="NLP sentiment analysis, historical trends, and ML predictions for 10 major companies",
+    description="NLP sentiment analysis of financial earnings reports using BART, FinBERT, and YAKE",
     version="2.0.0"
 )
 
@@ -40,212 +28,141 @@ COMPANIES = {
     "MDB":  "MongoDB Inc.",
 }
 
+# ── Pre-computed NLP results — no database required ──
+REPORTS = [
+    {
+        "ticker": "AAPL",
+        "company": "Apple Inc.",
+        "period": "Q2 2024",
+        "sentiment_label": "negative",
+        "sentiment_score": 0.9488,
+        "summary": "Apple reported Q2 2024 revenue of $90.8 billion, down 4% year over year. China revenue declined 13% to $16.4 billion driven by increased competition. iPad revenue fell 25%. Services revenue grew 14% to a record $23.9 billion. The company announced a record $110 billion share buyback program.",
+        "keywords": "China revenue, services revenue, share buyback, iPad revenue, iPhone sales, emerging markets, competition"
+    },
+    {
+        "ticker": "MSFT",
+        "company": "Microsoft Corporation",
+        "period": "Q3 2024",
+        "sentiment_label": "positive",
+        "sentiment_score": 0.9537,
+        "summary": "Microsoft reported Q3 2024 revenue of $61.9 billion, up 17% year over year. Azure cloud revenue grew 28%, driven by strong AI demand. Copilot integrations are accelerating enterprise adoption. Operating income grew 23% with expanding margins across all segments.",
+        "keywords": "Azure growth, AI demand, Copilot, cloud revenue, enterprise adoption, operating margin, intelligent cloud"
+    },
+    {
+        "ticker": "GOOGL",
+        "company": "Alphabet Inc.",
+        "period": "Q1 2024",
+        "sentiment_label": "positive",
+        "sentiment_score": 0.7422,
+        "summary": "Alphabet reported Q1 2024 revenue of $80.5 billion, up 15%. Google Cloud reached profitability with $900 million operating income. Search revenue grew 14% driven by AI-enhanced results. The company faces ongoing regulatory scrutiny in the EU and US antitrust proceedings.",
+        "keywords": "Google Cloud, profitability, Search revenue, regulatory risk, AI integration, YouTube, antitrust"
+    },
+    {
+        "ticker": "AMZN",
+        "company": "Amazon.com Inc.",
+        "period": "Q1 2024",
+        "sentiment_label": "positive",
+        "sentiment_score": 0.9598,
+        "summary": "Amazon reported Q1 2024 revenue of $143.3 billion, up 13%. AWS revenue grew 17% to $25 billion as cloud demand reaccelerates. Operating income surged to $15.3 billion from $4.8 billion a year ago. Advertising revenue grew 24%. The company raised Q2 guidance above expectations.",
+        "keywords": "AWS reacceleration, operating income, advertising revenue, cloud demand, margins, guidance, Prime"
+    },
+    {
+        "ticker": "NVDA",
+        "company": "NVIDIA Corporation",
+        "period": "Q1 2025",
+        "sentiment_label": "positive",
+        "sentiment_score": 0.9572,
+        "summary": "NVIDIA reported Q1 2025 revenue of $26 billion, up 206% year over year and above all estimates. Data center revenue reached $22.6 billion driven by insatiable AI infrastructure demand. Blackwell GPU architecture is ramping ahead of schedule. Operating margin expanded to 65%.",
+        "keywords": "data center revenue, Blackwell architecture, AI infrastructure, record revenue, operating margin, GPU demand, H100"
+    }
+]
+
 @app.get("/")
 def root():
     return {
         "name": "LLM Financial Intelligence Platform",
         "version": "2.0.0",
-        "companies": list(COMPANIES.keys()),
+        "description": "NLP pipeline using BART (summarization), FinBERT (sentiment), and YAKE (keywords) to analyze financial earnings reports",
+        "nlp_companies": ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"],
+        "platform_companies": list(COMPANIES.keys()),
         "endpoints": [
             "/reports",
             "/reports/{ticker}",
             "/sentiment/summary",
-            "/stock/{ticker}/history",
-            "/stock/{ticker}/events",
-            "/stock/{ticker}/prediction",
-            "/stock/{ticker}/earnings",
-            "/correlation",
             "/companies"
-        ]
+        ],
+        "demo": "https://anirudhcancode.github.io/portfolio/llm-demo.html",
+        "intelligence_platform": "https://anirudhcancode.github.io/portfolio/llm-intelligence-demo.html"
     }
 
 @app.get("/companies")
 def get_companies():
-    return {"companies": COMPANIES}
-
-# ── Existing NLP endpoints ──
+    return {
+        "nlp_analyzed": ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"],
+        "platform_tracked": COMPANIES
+    }
 
 @app.get("/reports")
 def get_reports():
-    with engine.connect() as conn:
-        df = pd.read_sql("SELECT * FROM report_analysis ORDER BY created_at DESC", conn)
-    return {"count": len(df), "reports": df.to_dict(orient="records")}
+    return {
+        "count": len(REPORTS),
+        "models_used": {
+            "summarization": "facebook/bart-large-cnn",
+            "sentiment": "ProsusAI/finbert",
+            "keywords": "YAKE"
+        },
+        "reports": REPORTS
+    }
 
 @app.get("/reports/{ticker}")
 def get_report(ticker: str):
     ticker = ticker.upper()
-    with engine.connect() as conn:
-        df = pd.read_sql(
-            f"SELECT * FROM report_analysis WHERE ticker = '{ticker}'", conn
-        )
-    if df.empty:
-        raise HTTPException(status_code=404, detail=f"No report found for {ticker}")
-    return df.to_dict(orient="records")[0]
+    for report in REPORTS:
+        if report["ticker"] == ticker:
+            return report
+    raise HTTPException(
+        status_code=404,
+        detail=f"No NLP report found for {ticker}. Analyzed companies: AAPL, MSFT, GOOGL, AMZN, NVDA"
+    )
 
 @app.get("/sentiment/summary")
 def sentiment_summary():
-    with engine.connect() as conn:
-        df = pd.read_sql("SELECT * FROM report_analysis", conn)
-    if df.empty:
-        raise HTTPException(status_code=404, detail="No reports found")
-    summary = {
-        "total_reports": len(df),
-        "positive": int((df['sentiment_label'] == 'positive').sum()),
-        "negative": int((df['sentiment_label'] == 'negative').sum()),
-        "neutral": int((df['sentiment_label'] == 'neutral').sum()),
-        "most_positive": df.loc[df['sentiment_score'].idxmax(), 'ticker'] if 'sentiment_score' in df.columns else None,
-        "most_negative": df.loc[df['sentiment_score'].idxmin(), 'ticker'] if 'sentiment_score' in df.columns else None,
-        "reports": df[['ticker', 'company', 'sentiment_label', 'sentiment_score']].to_dict(orient="records")
-    }
-    return summary
+    positive = [r for r in REPORTS if r["sentiment_label"] == "positive"]
+    negative = [r for r in REPORTS if r["sentiment_label"] == "negative"]
+    neutral = [r for r in REPORTS if r["sentiment_label"] == "neutral"]
 
-# ── New stock history endpoints ──
+    most_positive = max(REPORTS, key=lambda x: x["sentiment_score"] if x["sentiment_label"] == "positive" else 0)
+    most_negative = min(REPORTS, key=lambda x: x["sentiment_score"] if x["sentiment_label"] == "negative" else 1)
 
-@app.get("/stock/{ticker}/history")
-def stock_history(ticker: str, days: int = 365):
-    ticker = ticker.upper()
-    if ticker not in COMPANIES:
-        raise HTTPException(status_code=404, detail=f"{ticker} not found")
-    with engine.connect() as conn:
-        df = pd.read_sql(
-            f"""SELECT date, close, volume, daily_return, volatility_30d,
-                momentum_30d, momentum_90d
-                FROM price_metrics
-                WHERE ticker = '{ticker}'
-                ORDER BY date DESC
-                LIMIT {days}""",
-            conn
-        )
-    if df.empty:
-        raise HTTPException(status_code=404, detail=f"No price data for {ticker}")
-    df['date'] = df['date'].astype(str)
-    df = df.sort_values('date')
     return {
-        "ticker": ticker,
-        "company": COMPANIES[ticker],
-        "days": len(df),
-        "latest_price": round(float(df['close'].iloc[-1]), 2),
-        "price_change_30d": round(float(df['momentum_30d'].iloc[-1] or 0), 2),
-        "price_change_90d": round(float(df['momentum_90d'].iloc[-1] or 0), 2),
-        "volatility_30d": round(float(df['volatility_30d'].iloc[-1] or 0), 2),
-        "history": df.to_dict(orient="records")
+        "total_reports": len(REPORTS),
+        "positive": len(positive),
+        "negative": len(negative),
+        "neutral": len(neutral),
+        "most_positive": most_positive["ticker"],
+        "most_negative": most_negative["ticker"],
+        "key_finding": "Apple (AAPL) was the only negative report at 94.88% confidence — driven by 13% China revenue decline and 25% iPad revenue drop",
+        "reports": [
+            {
+                "ticker": r["ticker"],
+                "company": r["company"],
+                "sentiment_label": r["sentiment_label"],
+                "sentiment_score": r["sentiment_score"],
+                "period": r["period"]
+            }
+            for r in REPORTS
+        ]
     }
 
-@app.get("/stock/{ticker}/events")
-def stock_events(ticker: str):
-    ticker = ticker.upper()
-    if ticker not in COMPANIES:
-        raise HTTPException(status_code=404, detail=f"{ticker} not found")
-    with engine.connect() as conn:
-        df = pd.read_sql(
-            f"""SELECT date, event_type, price_change_pct, close_price, description
-                FROM market_events
-                WHERE ticker = '{ticker}'
-                ORDER BY date DESC
-                LIMIT 50""",
-            conn
-        )
-    df['date'] = df['date'].astype(str)
+@app.get("/analyze")
+def analyze_info():
     return {
-        "ticker": ticker,
-        "company": COMPANIES[ticker],
-        "total_major_events": len(df),
-        "events": df.to_dict(orient="records")
-    }
-
-@app.get("/stock/{ticker}/earnings")
-def stock_earnings(ticker: str):
-    ticker = ticker.upper()
-    if ticker not in COMPANIES:
-        raise HTTPException(status_code=404, detail=f"{ticker} not found")
-    with engine.connect() as conn:
-        earnings = pd.read_sql(
-            f"""SELECT period, period_date, eps_actual, eps_estimate,
-                eps_surprise_pct, revenue, net_income
-                FROM earnings_history
-                WHERE ticker = '{ticker}'
-                ORDER BY period_date DESC""",
-            conn
-        )
-        reactions = pd.read_sql(
-            f"""SELECT period, period_date, reaction_1d_pct,
-                reaction_5d_pct, reaction_30d_pct
-                FROM earnings_reactions
-                WHERE ticker = '{ticker}'
-                ORDER BY period_date DESC""",
-            conn
-        )
-    earnings['period_date'] = earnings['period_date'].astype(str)
-    reactions['period_date'] = reactions['period_date'].astype(str)
-    return {
-        "ticker": ticker,
-        "company": COMPANIES[ticker],
-        "quarters": len(earnings),
-        "earnings_history": earnings.to_dict(orient="records"),
-        "price_reactions": reactions.to_dict(orient="records")
-    }
-
-@app.get("/stock/{ticker}/prediction")
-def stock_prediction(ticker: str):
-    ticker = ticker.upper()
-    if ticker not in COMPANIES:
-        raise HTTPException(status_code=404, detail=f"{ticker} not found")
-    with engine.connect() as conn:
-        df = pd.read_sql(
-            f"""SELECT * FROM predictions
-                WHERE ticker = '{ticker}'
-                ORDER BY prediction_date DESC
-                LIMIT 1""",
-            conn
-        )
-    if df.empty:
-        raise HTTPException(status_code=404, detail=f"No prediction found for {ticker}")
-    row = df.iloc[0]
-    return {
-        "ticker": ticker,
-        "company": COMPANIES[ticker],
-        "predicted_period": row['predicted_period'],
-        "prediction_date": str(row['prediction_date']),
-        "predicted_sentiment": row['predicted_sentiment'],
-        "sentiment_confidence": round(float(row['sentiment_confidence']) * 100, 1),
-        "predicted_reaction_30d": round(float(row['predicted_reaction_30d']), 2),
-        "predicted_reaction_1d": round(float(row['predicted_reaction_1d']), 2),
-        "model_version": row['model_version'],
-        "interpretation": f"Model predicts {row['predicted_sentiment']} sentiment for {row['predicted_period']} with {round(float(row['sentiment_confidence'])*100,1)}% confidence and a {round(float(row['predicted_reaction_30d']),1)}% 30-day price reaction."
-    }
-
-@app.get("/correlation")
-def correlation():
-    with engine.connect() as conn:
-        df = pd.read_sql(
-            """SELECT ticker, reaction_1d_pct, reaction_5d_pct,
-               reaction_30d_pct, eps_surprise_pct
-               FROM earnings_reactions
-               WHERE eps_surprise_pct IS NOT NULL""",
-            conn
-        )
-    if df.empty:
-        raise HTTPException(status_code=404, detail="No reaction data found")
-
-    results = []
-    for ticker in df['ticker'].unique():
-        t = df[df['ticker'] == ticker]
-        if len(t) < 3:
-            continue
-        corr_1d = round(float(t['eps_surprise_pct'].corr(t['reaction_1d_pct'])), 3)
-        corr_30d = round(float(t['eps_surprise_pct'].corr(t['reaction_30d_pct'])), 3)
-        avg_reaction = round(float(t['reaction_30d_pct'].mean()), 2)
-        results.append({
-            "ticker": ticker,
-            "company": COMPANIES.get(ticker, ticker),
-            "quarters_analyzed": len(t),
-            "eps_surprise_vs_1d_correlation": corr_1d,
-            "eps_surprise_vs_30d_correlation": corr_30d,
-            "avg_30d_reaction": avg_reaction,
-        })
-
-    results.sort(key=lambda x: x['eps_surprise_vs_30d_correlation'], reverse=True)
-    return {
-        "description": "Correlation between EPS surprise % and subsequent price reaction",
-        "companies": results
+        "message": "On-demand analysis requires GPU inference which is not available on the free deployment tier.",
+        "pre_computed_results": "Use GET /reports or GET /reports/{ticker} to access pre-computed results for AAPL, MSFT, GOOGL, AMZN, NVDA",
+        "models": {
+            "summarization": "facebook/bart-large-cnn — abstractive summarization",
+            "sentiment": "ProsusAI/finbert — BERT fine-tuned on financial text",
+            "keywords": "YAKE — statistical keyword extraction"
+        },
+        "intelligence_platform": "https://anirudhcancode.github.io/portfolio/llm-intelligence-demo.html"
     }
