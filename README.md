@@ -51,7 +51,7 @@ After the NLP pipeline, the question was: does negative sentiment predict stock 
 |---|---|
 | Companies | 10 |
 | Stock price records | 28,877 |
-| Earnings records | 454 (up to 54 quarters per company) |
+| Earnings records | 454 (up to 40 quarters per company) |
 | Major market events detected | 1,849 |
 | ML training samples | 435 |
 | Interactive charts | 14 |
@@ -62,7 +62,7 @@ After the NLP pipeline, the question was: does negative sentiment predict stock 
 - 28,877 total rows stored in PostgreSQL
 
 ### Phase 2 — Earnings History
-- Up to 54 quarters of earnings data per company via yfinance earnings dates
+- Up to 40 quarters of earnings data per company via yfinance earnings dates
 - EPS actual vs estimate, revenue, net income, earnings surprise %
 - 454 total earnings records — large caps go back to 2014
 
@@ -146,7 +146,7 @@ uvicorn api.main:app --reload
 ## Dataset
 
 - Stock prices: 10 years daily OHLCV via yfinance (2015–2026)
-- Earnings: Up to 54 quarters per company via yfinance earnings dates
+- Earnings: Up to 40 quarters per company via yfinance earnings dates
 - NLP transcripts: Real earnings call transcripts (Q3/Q4 2023 — Q1/Q2 2024)
 - Companies: AAPL, MSFT, GOOGL, AMZN, NVDA, TSLA, PLTR, SNOW, DDOG, MDB
 
